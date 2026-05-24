@@ -1,0 +1,78 @@
+{
+  "base_width": 2071,
+  "base_height": 1231,
+  "game_region": {
+    "x_offset": 0,
+    "y_offset": 0,
+    "width": 0,
+    "height": 0
+  },
+  "elements": {
+    "my_hand": {
+      "x": 10,
+      "y": 879,
+      "w": 2051,
+      "h": 215
+    },
+    "bottom_cards": {
+      "x": 25,
+      "y": 175,
+      "w": 500,
+      "h": 130
+    },
+    "play_area": {
+      "x": 350,
+      "y": 245,
+      "w": 1350,
+      "h": 620
+    },
+    "top_player": {
+      "x": 870,
+      "y": 90,
+      "w": 250,
+      "h": 100,
+      "count_x": 960,
+      "count_y": 40
+    },
+    "left_player": {
+      "x": 15,
+      "y": 450,
+      "w": 280,
+      "h": 180,
+      "count_x": 80,
+      "count_y": 380
+    },
+    "right_player": {
+      "x": 1760,
+      "y": 350,
+      "w": 280,
+      "h": 180,
+      "count_x": 1820,
+      "count_y": 380
+    },
+    "landmark_left": {
+      "x": 135,
+      "y": 465,
+      "w": 80,
+      "h": 40
+    },
+    "landmark_top": {
+      "x": 950,
+      "y": 80,
+      "w": 80,
+      "h": 40
+    },
+    "landmark_right": {
+      "x": 1800,
+      "y": 320,
+      "w": 80,
+      "h": 40
+    },
+    "bottom_bar": {
+      "x": 0,
+      "y": 1160,
+      "w": 2071,
+      "h": 70
+    }
+  }
+}
