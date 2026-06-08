@@ -1,143 +1,278 @@
-# 欢乐斗地主自动辅助 (Doudizhu Bot)
+# 欢乐斗地主 AI Bot - Agent 指南
 
 ## 项目概述
 
-本项目是一个基于固定坐标 + 屏幕截取的《腾讯欢乐斗地主》游戏辅助脚本。
-它通过 Windows API 定位游戏窗口，按预设坐标截取屏幕区域（手牌区、出牌区、底牌区、玩家信息区等），
-为后续卡牌识别和自动出牌决策提供视觉输入。
+基于 **两阶段识别架构** 的斗地主辅助 bot：
+- **阶段一**：YOLOv8n 1-class 检测器定位每张牌的位置
+- **阶段二**：MobileNetV3-Small 15-class 分类器识别牌面数字
 
-当前版本仅实现了**窗口定位、坐标适配、高频截屏与区域提取**，
-卡牌识别（OCR/模板匹配）与出牌逻辑尚未实现。
+> 单阶段 54-class YOLO 已验证不可行（30 张图训练 mAP@0.5 仅 1.5%），所有生产代码均围绕两阶段方案。
 
-## 技术栈
+---
 
-- **语言**: Python 3
-- **核心依赖**:
-  - `opencv-python` (cv2) —— 图像显示、绘制调试框、交互校准
-  - `numpy` —— 图像数组操作
-  - `mss` —— 高性能屏幕截取
-  - `pywin32` (win32gui, win32con) —— Windows 窗口查找、置顶、获取客户区坐标
-  - `Pillow` (PIL) —— 备选截屏方案（当前未实际使用）
-- **运行平台**: Windows（依赖 win32gui）
+## 核心系统
 
-## 项目结构
+### `ddz.py` - 主程序
+欢乐斗地主主 bot，截图、识别、输出手牌/底牌/出牌区结果。
+
+```bash
+# 运行主程序（需要游戏窗口已打开）
+python ddz.py
+
+# 保存截图到 screenshots/（用于数据集准备）
+python ddz.py --save-screenshot
+```
+
+**依赖**：`ddz_config.json`（坐标配置）、`ddz_yolo_recognizer.py`
+
+### `ddz_yolo_recognizer.py` - 两阶段识别器 V3
+核心识别模块，封装 `TwoStageRecognizerV3`：
+- `recognize(hand_img)` — 手牌识别（重叠牌，支持 shift/mirror 边缘处理）
+- `recognize_play(play_img)` — 出牌区识别（带宽高比过滤）
+- `recognize_bottom(bottom_img)` — 底牌识别（3x 上采样 + 垂直投影）
+
+**类名顺序**：`['10', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'BJ', 'J', 'K', 'Q', 'SJ']`
+
+**模型文件**：
+- `ddz_detect_best.pt` — 1-class YOLO 检测器
+- `card_classifier_best.pth` — MobileNetV3 分类器
+
+---
+
+## 数据采集与标注
+
+### `auto_capture.py` - 自动截图
+用 `mss`（默认）或 `win32gui` 后端，定时截取游戏窗口。
+
+```bash
+# 默认 mss 后端，每秒 1 张，保存到 raw_auto/
+python auto_capture.py
+
+# win32gui 后端（BitBlt），自定义间隔和窗口
+python auto_capture.py --backend win32 --interval 0.5 --window "腾讯欢乐斗地主"
+
+# 修正坐标偏移（DPI 或窗口边框问题）
+python auto_capture.py --offset-x 8 --offset-y 31
+```
+
+**参数**：`--backend`, `--interval`, `--output`, `--window`, `--offset-x`, `--offset-y`
+
+### `capture_and_split.py` - 实时截图分割
+按键截图，自动分割手牌/底牌/出牌区并保存单张牌图。
+
+```bash
+python capture_and_split.py
+# 按键: S=截图并分割, Q=退出
+```
+
+**输出**：
+- `captured_cards/hand/` — 手牌分割图
+- `captured_cards/bottom/` — 底牌分割图
+- `captured_cards/play/` — 出牌区分割图
+- `captured_cards/debug/` — 带框调试图
+
+### `split_existing.py` - 批量分割已有截图
+对 `region_*.png`（ddz.py 提取的区域图）或 `raw_screenshots/` 下的完整截图做批量分割。
+
+```bash
+# 分割 region_*.png（默认）
+python split_existing.py
+
+# 分割 raw_screenshots/ 下的完整截图
+python split_existing.py --raw
+```
+
+### `label_helper.py` - YOLO 标注辅助
+为图片生成 YOLO 格式 `.txt` 标注文件。
+
+```bash
+# 代码传入模式（直接给像素坐标）
+python label_helper.py image.png --code "3 850 250 950 400" "5 960 250 1060 400"
+
+# 自动预标注（用已有 ddz_detect_best.pt 预打标，人工复核）
+python label_helper.py image.png --auto --viz
+
+# 手动交互模式
+python label_helper.py image.png --manual
+```
+
+**参数**：`image`, `--code`, `--auto`, `--manual`, `--output`, `--viz`
+
+---
+
+## 数据预处理
+
+### `prepare_dataset.py` - 半自动数据集准备
+读取 `screenshots/` 下手牌截图，自动分割裁剪到 `dataset/crops_raw/`，保存元数据。
+
+```bash
+python prepare_dataset.py
+# 下一步：手动把 crops_raw/ 下的图按类别拖进 dataset/by_class/ 对应文件夹
+```
+
+### `generate_yolo_labels.py` - 生成 YOLO 标注
+根据 `by_class/` 分类结果，反向生成 YOLO `.txt` 标注文件。
+
+```bash
+# 前置：prepare_dataset.py + 手动分类
+python generate_yolo_labels.py
+```
+
+### `extract_bottom_cards.py` - 底牌分割
+对底牌区域图做垂直投影分割，输出单张底牌。
+
+```bash
+python extract_bottom_cards.py screenshots/bottom_001.png
+# 输出到 extracted_bottom/
+```
+
+---
+
+## 模型训练
+
+### `ddz_train_detect.py` - 训练 1-class YOLO 检测器
+
+```bash
+python ddz_train_detect.py
+```
+
+- **输入**：`dataset_detect/`（由 `prepare_detect.py` 生成）
+- **输出**：`ddz_detect_best.pt`
+- **配置**：`imgsz=1280`, `epochs=100`, `batch=4`
+
+前置：
+```bash
+python prepare_detect.py    # 把 54 类标注转 1 类
+```
+
+### `train_classifier.py` - 训练 MobileNetV3 分类器
+
+```bash
+python train_classifier.py
+```
+
+- **输入**：`dataset/by_class/`（15 个文件夹：`10`, `2`, `3`, `4`, `5`, `6`, `7`, `8`, `9`, `A`, `BJ`, `J`, `K`, `Q`, `SJ`）
+- **输出**：`card_classifier_best.pth`
+- **模型**：MobileNetV3-Small
+
+### `train_yolov8.py` - YOLOv8 训练脚本（54 类，已废弃）
+
+```bash
+python train_yolov8.py --data labels_my-project-name --epochs 100
+```
+
+> ⚠️ 已验证效果极差（mAP@0.5 = 1.5%），仅作参考保留。生产环境请用两阶段方案。
+
+---
+
+## 测试与验证
+
+### `test_recognize_from_file.py` - 离线测试两阶段识别
+不需要开游戏窗口，直接对截图文件测试手牌/底牌/出牌识别。
+
+```bash
+# 测试单张截图
+python test_recognize_from_file.py raw_screenshots/001_xxx_full.png
+
+# 测试多张
+python test_recognize_from_file.py raw_screenshots/*.png
+```
+
+### `test_on_images.py` - Roboflow 模型测试
+用 `yolov8l best.pt`（52-class Roboflow 模型）测试标准扑克牌图片。
+
+```bash
+python test_on_images.py images/
+```
+
+> 该模型在标准牌上 conf>0.9，在游戏截图上完全失效（domain gap）。
+
+### `test_roboflow_model.py` - Roboflow 模型评估
+对比 Roboflow `best.pt` 在游戏截图 vs 标准牌上的效果。
+
+```bash
+python test_roboflow_model.py
+```
+
+### `test_yolo54.py` - 54 类 YOLO 测试（已废弃）
+
+```bash
+# 截图测试（需开游戏窗口）
+python test_yolo54.py
+
+# 或用 --image 指定文件（脚本内有该参数）
+```
+
+---
+
+## 配置说明
+
+### `ddz_config.json`
+坐标配置文件，覆盖 `ddz.py` 中的默认 `ELEMENTS`：
+
+```json
+{
+  "base_width": 2071,
+  "base_height": 1231,
+  "game_region": { "x_offset": 0, "y_offset": 0, "width": 0, "height": 0 },
+  "elements": {
+    "my_hand": { "x": 10, "y": 850, "w": 2051, "h": 230 },
+    "bottom_cards": { "x": 25, "y": 175, "w": 500, "h": 130 },
+    "play_area": { "x": 350, "y": 245, "w": 1350, "h": 620 }
+  }
+}
+```
+
+- `game_region`：游戏画面在客户区内的偏移（网页/小程序嵌套时需要）
+- `elements`：各 ROI 相对于游戏区域的坐标（基于 2071×1231 基准分辨率）
+- 实际运行时会根据截图尺寸自动缩放
+
+---
+
+## 目录结构速查
 
 ```
 doudizhubot/
-├── ddz.py              # 唯一源码文件，包含全部逻辑
-├── ddz_config.json     # 校准后保存的坐标配置（运行时生成）
-├── debug_fixed.png     # 调试图：标注各检测区域位置
-├── region_*.png        # 提取出的各区域截图（运行时生成）
-└── .vscode/settings.json
+├── ddz.py                          # 主程序
+├── ddz_yolo_recognizer.py          # 两阶段识别器 V3
+├── ddz_config.json                 # 坐标配置
+│
+├── ddz_detect_best.pt              # 1-class 检测模型（生产）
+├── card_classifier_best.pth        # 15-class 分类模型（生产）
+│
+├── auto_capture.py                 # 自动截图工具
+├── capture_and_split.py            # 实时截图分割
+├── split_existing.py               # 批量分割已有截图
+├── label_helper.py                 # 标注辅助
+│
+├── prepare_dataset.py              # 数据集准备
+├── prepare_detect.py               # 54类→1类转换
+├── generate_yolo_labels.py         # 生成 YOLO 标签
+├── extract_bottom_cards.py         # 底牌分割
+│
+├── ddz_train_detect.py             # 训练检测器
+├── train_classifier.py             # 训练分类器
+├── train_yolov8.py                 # 54类训练（废弃）
+│
+├── test_recognize_from_file.py     # 离线测试两阶段识别
+├── test_on_images.py               # Roboflow 模型测试
+│
+├── raw_screenshots/                # 原始完整截图
+├── screenshots/                    # ddz.py --save-screenshot 输出
+├── captured_cards/                 # capture_and_split.py 输出
+├── dataset/
+│   ├── by_class/                   # 15 类分类训练数据
+│   └── crops_raw/                  # 自动裁剪的原始牌图
+├── dataset_detect/                 # 1-class 检测训练数据
+├── labels_my-project-name/         # 54类标注数据（30张）
+└── test_output/                    # 测试结果可视化
 ```
 
-> 注意：本项目无 `requirements.txt`、`pyproject.toml` 或测试目录，
-> 所有代码集中在单文件中。
+---
 
-## 代码组织
+## 开发备忘
 
-`ddz.py` 自上而下分为以下模块：
-
-| 区域 | 类/函数 | 职责 |
-|------|---------|------|
-| 全局配置 | `WINDOW_WIDTH`, `WINDOW_HEIGHT`, `GAME_REGION`, `ELEMENTS` | 基准分辨率与各元素相对于游戏区域的像素坐标 |
-| 窗口操作 | `WindowFinder` | 按标题查找窗口、恢复最小化、置顶、获取客户区绝对坐标 |
-| 截屏 | `Capture` | 使用 `mss` 截取指定屏幕区域 |
-| 坐标系统 | `FixedCoords` | 根据实际窗口尺寸与基准分辨率计算缩放比例，提供元素绝对坐标与 ROI 提取 |
-| 高速捕获 | `HighSpeedCapture` | 后台线程以固定 FPS 持续截屏，使用 `deque` 环形缓冲区保存最近帧 |
-| 主控 | `DDZBot` | 初始化流程：找窗口 → 建坐标 → 启动捕获 → 保存调试图 |
-| 校准工具 | `calibrate()` | 交互式 OpenCV 窗口，用键盘微调每个区域的坐标与大小，保存为 JSON |
-
-## 运行方式
-
-### 1. 直接运行（测试截屏与坐标）
-
-```bash
-python ddz.py
-```
-
-流程：
-1. 查找标题包含“腾讯欢乐斗地主”的可见窗口；
-2. 计算客户区坐标与缩放比例；
-3. 启动 30 FPS 后台截屏线程；
-4. 运行 5 秒后保存 `debug_fixed.png` 与三个区域截图；
-5. 按任意键退出。
-
-### 2. 校准模式（调整坐标）
-
-当游戏窗口分辨率或布局变化时，先运行校准：
-
-```bash
-python ddz.py --calibrate
-```
-
-操作说明：
-- `W/A/S/D` —— 移动当前区域
-- `Q/E` —— 减/加宽度
-- `R/F` —— 减/加高度
-- `+/-` —— 调整步长
-- `N` —— 切换到下一个元素
-- `ESC` —— 保存并退出，配置写入 `ddz_config.json`
-
-### 3. 依赖安装
-
-由于无依赖清单文件，需手动安装：
-
-```bash
-pip install opencv-python numpy mss pywin32 Pillow
-```
-
-## 关键配置
-
-### 基准分辨率
-- `BASE_WIDTH = 2071`
-- `BASE_HEIGHT = 1231`
-
-所有 `ELEMENTS` 中的坐标均基于该分辨率测量。若实际窗口尺寸不同，
-`FixedCoords` 会自动按宽高比分别缩放 `x`/`w` 与 `y`/`h`。
-
-### 预定义区域
-
-| 区域键 | 说明 |
-|--------|------|
-| `my_hand` | 底部我的手牌区（棕色条） |
-| `bottom_cards` | 左上角底牌区 |
-| `play_area` | 中央出牌区 |
-| `top_player` | 上家（顶部中央） |
-| `left_player` | 左家 |
-| `right_player` | 右家 |
-| `landmark_*` | 地主标识候选位置 |
-| `bottom_bar` | 底部倍率/金币信息栏 |
-
-> 若坐标偏差导致区域提取不准，请使用 `--calibrate` 重新标定。
-
-## 开发约定
-
-- **单文件维护**：所有功能写在 `ddz.py` 中，无子模块拆分。
-- **中文输出**：所有 `print` 与注释使用中文，方便调试时直接阅读。
-- **硬编码常量**：分辨率、坐标、颜色等以模块级常量形式存在，便于一次性调整。
-- **可选导入**：`win32gui`、`PIL`、`mss` 均采用 `try/except` 导入，
-  但 `mss` 与 `win32gui` 为实际运行所必需。
-- **线程安全**：`HighSpeedCapture` 使用 `deque` 与后台守护线程，
-  主线程通过 `latest()` / `recent()` 只读访问缓冲区。
-
-## 测试策略
-
-- 当前**无单元测试**。
-- 验证方式：运行 `python ddz.py`，检查终端输出的 FPS 与坐标，
-  并人工查看生成的 `debug_fixed.png` 中各彩色框是否准确覆盖对应游戏元素。
-
-## 已知限制与后续方向
-
-1. **未实现卡牌识别**：当前仅能截图，未接入 OCR 或模板匹配来识别具体牌面。
-2. **未实现出牌操作**：无模拟鼠标点击或键盘输入的代码。
-3. **分辨率依赖**：虽支持缩放，但极端比例可能导致偏差，仍需校准。
-4. **仅支持 Windows**：因使用 `win32gui`。
-5. **单窗口**：`WindowFinder` 仅取匹配的第一个窗口。
-
-## 安全与合规注意
-
-- 本项目仅作为学习、研究与个人娱乐使用。
-- 自动化操作可能违反游戏服务条款，请自行评估风险。
-- 脚本不会修改游戏内存，仅通过屏幕截取与 Windows API 操作，
-  但高频截屏仍可能被部分反作弊机制检测。
+- **DPI 问题**：Windows DPI 缩放会导致 `win32gui.GetClientRect` 与 `mss` 截图尺寸不匹配。已在 `WindowFinder` 中调用 `SetProcessDPIAware()`，并在 `FixedCoords` 中用实际截图尺寸做校准。
+- **GPU 训练**：`ddz` conda 环境已安装 CUDA 版 PyTorch（`torch 2.6.0+cu124`），训练脚本会自动检测 GPU。
+- **红色 5 问题**：分类器对红心 5/方块 5 容易误判，训练时建议加入 `ColorJitter` 数据增强。
+- **底牌识别**：底牌尺寸约 50px，检测器容易漏检，当前用 3x 上采样 + 垂直投影作为 fallback。
