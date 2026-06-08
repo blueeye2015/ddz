@@ -482,19 +482,22 @@ class DDZBot:
             print(f"手牌: {cards} (共{len(cards)}张)")
             cv2.imwrite("debug_recognize.png", hand_img)
 
-        # 底牌识别
+        # 底牌识别（小牌专用方法）
         print("\n[测试] 识别底牌...")
         bottom_img = self.coords.extract(img, 'bottom_cards')
         if bottom_img.size > 0:
-            bottom_cards = self.recognizer.recognize(bottom_img.copy())
-            print(f"底牌: {bottom_cards} (共{len(bottom_cards)}张)")
+            bottom_cards = self.recognizer.recognize_bottom(bottom_img.copy())
+            names = [n for n, c in bottom_cards]
+            confs = [f"{c:.0%}" for n, c in bottom_cards]
+            print(f"底牌: {names} (共{len(names)}张)")
+            print(f"      置信度: {confs}")
             cv2.imwrite("debug_bottom.png", bottom_img)
 
-        # 出牌识别
+        # 出牌识别（过滤桌面干扰）
         print("\n[测试] 识别出牌...")
         play_img = self.coords.extract(img, 'play_area')
         if play_img.size > 0:
-            play_cards = self.recognizer.recognize(play_img.copy())
+            play_cards = self.recognizer.recognize_play(play_img.copy())
             print(f"出牌: {play_cards} (共{len(play_cards)}张)")
             cv2.imwrite("debug_play.png", play_img)
 
