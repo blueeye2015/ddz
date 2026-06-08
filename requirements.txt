@@ -1,0 +1,38 @@
+# 欢乐斗地主 AI Bot - Python 依赖
+# 
+# 安装方式：
+#   1) CPU 环境（通用）：
+#      pip install -r requirements.txt
+#
+#   2) GPU 环境（NVIDIA CUDA 12.x，推荐）：
+#      pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+#      pip install -r requirements.txt
+#
+#   3) Conda 环境：
+#      conda create -n ddz python=3.11
+#      conda activate ddz
+#      pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+#      pip install -r requirements.txt
+
+# === 深度学习 ===
+# PyTorch：GPU 版请用上面的 index-url 安装，这里仅声明最低版本
+torch>=2.6.0
+torchvision>=0.21.0
+
+# YOLOv8
+ultralytics>=8.3.0
+
+# === 图像处理 ===
+opencv-python>=4.8.0
+Pillow>=10.0.0
+mss>=9.0.0
+
+# === 科学计算 ===
+numpy>=1.24.0
+scipy>=1.11.0
+
+# === 可视化 ===
+matplotlib>=3.7.0
+
+# === Windows 专用（截图/窗口操作） ===
+pywin32>=300; sys_platform == "win32"
